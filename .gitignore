@@ -1,0 +1,10 @@
+# Foundry build artifacts
+out/
+cache/
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
