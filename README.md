@@ -15,9 +15,11 @@ SellerPadi's on-chain architecture utilizes the **ERC-1967 UUPS (Universal Upgra
    - Gasless customer and merchant experience: uses backend EIP-712 / message hash signatures with nonce tracking to prevent replay attacks.
 
 2. **`SellerPadiShipment.sol`**:
-   - Manages the lifecycle of tracked package dispatches (`Created` → `InTransit` → `Delivered` → `Verified` / `Disputed`).
-   - Integrates dual-layer physical QR labels with scratch-off inner PIN verifications (`RSIT-XXXX`).
-   - Enforces cryptographic proof of physical custody transfer upon customer handover.
+   - Manages the lifecycle of tracked package dispatches (`Created` → `InTransit` → `Delivered` → `Verified` / `Disputed` → `ReturnTransit` → `ReturnedToStore` → `Resolved` or `InTransit`).
+   - Supports reverse logistics: disputed packages transition through return rider handover (`ReturnTransit`) and store return confirmation (`ReturnedToStore`).
+   - Store settlement branches: Path A resolves the dispute (`Resolved`), while Path B re-dispatches fresh replacement goods (`InTransit`) with a new scratch-off secret PIN (`newPackageHash`) and new rider assignment.
+   - Integrates dual-layer physical QR labels with scratch-off inner PIN verifications (`SP-XXXX`).
+   - Enforces cryptographic proof of physical custody transfer upon customer and store handovers.
 
 ---
 

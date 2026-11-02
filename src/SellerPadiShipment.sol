@@ -12,18 +12,17 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
  * @notice A decentralized UUPS-upgradeable shipment verification and chain of custody registry.
  * @dev Tracks shipment states and validates status transitions using cryptographically signed messages.
  */
-contract SellerPadiShipment is
-    Initializable,
-    UUPSUpgradeable,
-    OwnableUpgradeable
-{
+contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     // --- Enums ---
     enum Status {
         Created,
         InTransit,
         Delivered,
         Verified,
-        Disputed
+        Disputed,
+        ReturnTransit,
+        ReturnedToStore,
+        Resolved
     }
 
     // --- Structs ---
@@ -44,35 +43,23 @@ contract SellerPadiShipment is
 
     // --- Events ---
     event ShipmentRegistered(
-        bytes32 indexed packageId,
-        address indexed shipper,
-        bytes32 packageHash,
-        uint256 timestamp
+        bytes32 indexed packageId, address indexed shipper, bytes32 packageHash, uint256 timestamp
     );
-    event ShipmentHandover(
-        bytes32 indexed packageId,
-        address indexed nextHandler,
-        uint256 timestamp
-    );
+    event ShipmentHandover(bytes32 indexed packageId, address indexed nextHandler, uint256 timestamp);
     event ShipmentVerified(bytes32 indexed packageId, uint256 timestamp);
-    event ShipmentDisputed(
-        bytes32 indexed packageId,
-        string reason,
-        uint256 timestamp
+    event ShipmentDisputed(bytes32 indexed packageId, string reason, uint256 timestamp);
+    event ShipmentReturnHandover(bytes32 indexed packageId, address indexed returnHandler, uint256 timestamp);
+    event ShipmentReturnedToStore(bytes32 indexed packageId, address indexed storeBranch, uint256 timestamp);
+    event ShipmentResolved(bytes32 indexed packageId, string resolutionType, uint256 timestamp);
+    event ShipmentRedispatched(
+        bytes32 indexed packageId, bytes32 newPackageHash, address indexed nextHandler, uint256 timestamp
     );
-    event BackendSignerChanged(
-        address indexed oldSigner,
-        address indexed newSigner
-    );
+    event BackendSignerChanged(address indexed oldSigner, address indexed newSigner);
 
     // --- Custom Errors ---
     error ShipmentNotFound(bytes32 packageId);
     error ShipmentAlreadyExists(bytes32 packageId);
-    error InvalidStatusTransition(
-        bytes32 packageId,
-        Status currentStatus,
-        Status targetStatus
-    );
+    error InvalidStatusTransition(bytes32 packageId, Status currentStatus, Status targetStatus);
     error InvalidPackageHash();
     error InvalidShipperAddress();
     error InvalidHandlerAddress();
@@ -107,33 +94,20 @@ contract SellerPadiShipment is
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic signature from the backend signer.
      */
-    function registerShipment(
-        bytes32 packageId,
-        bytes32 packageHash,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
+    function registerShipment(bytes32 packageId, bytes32 packageHash, uint256 deadline, bytes calldata signature)
+        external
+    {
         if (block.timestamp > deadline) revert SignatureExpired();
         if (packageHash == bytes32(0)) revert InvalidPackageHash();
-        if (_shipments[packageId].packageId != bytes32(0))
+        if (_shipments[packageId].packageId != bytes32(0)) {
             revert ShipmentAlreadyExists(packageId);
+        }
 
         address shipper = msg.sender;
         uint256 nonce = userNonces[shipper];
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                shipper,
-                packageId,
-                packageHash,
-                nonce,
-                deadline,
-                block.chainid,
-                address(this)
-            )
-        );
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            messageHash
-        );
+        bytes32 messageHash =
+            keccak256(abi.encodePacked(shipper, packageId, packageHash, nonce, deadline, block.chainid, address(this)));
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
             revert InvalidSignature();
         }
@@ -160,42 +134,23 @@ contract SellerPadiShipment is
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic signature from the backend signer.
      */
-    function logHandover(
-        bytes32 packageId,
-        address nextHandler,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
+    function logHandover(bytes32 packageId, address nextHandler, uint256 deadline, bytes calldata signature) external {
         if (block.timestamp > deadline) revert SignatureExpired();
         if (nextHandler == address(0)) revert InvalidHandlerAddress();
 
         Shipment storage shipment = _shipments[packageId];
-        if (shipment.packageId == bytes32(0))
+        if (shipment.packageId == bytes32(0)) {
             revert ShipmentNotFound(packageId);
+        }
         if (shipment.status != Status.Created) {
-            revert InvalidStatusTransition(
-                packageId,
-                shipment.status,
-                Status.InTransit
-            );
+            revert InvalidStatusTransition(packageId, shipment.status, Status.InTransit);
         }
 
         address operator = msg.sender;
         uint256 nonce = userNonces[operator];
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                operator,
-                packageId,
-                nextHandler,
-                nonce,
-                deadline,
-                block.chainid,
-                address(this)
-            )
-        );
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            messageHash
-        );
+        bytes32 messageHash =
+            keccak256(abi.encodePacked(operator, packageId, nextHandler, nonce, deadline, block.chainid, address(this)));
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
             revert InvalidSignature();
         }
@@ -217,29 +172,20 @@ contract SellerPadiShipment is
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic signature from the backend signer.
      */
-    function verifyDelivery(
-        bytes32 packageId,
-        string calldata innerSecret,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
+    function verifyDelivery(bytes32 packageId, string calldata innerSecret, uint256 deadline, bytes calldata signature)
+        external
+    {
         if (block.timestamp > deadline) revert SignatureExpired();
 
         Shipment storage shipment = _shipments[packageId];
-        if (shipment.packageId == bytes32(0))
+        if (shipment.packageId == bytes32(0)) {
             revert ShipmentNotFound(packageId);
+        }
         if (shipment.status != Status.InTransit) {
-            revert InvalidStatusTransition(
-                packageId,
-                shipment.status,
-                Status.Verified
-            );
+            revert InvalidStatusTransition(packageId, shipment.status, Status.Verified);
         }
 
-        if (
-            keccak256(abi.encodePacked(packageId, innerSecret)) !=
-            shipment.packageHash
-        ) {
+        if (keccak256(abi.encodePacked(packageId, innerSecret)) != shipment.packageHash) {
             revert InvalidSecret();
         }
 
@@ -247,18 +193,10 @@ contract SellerPadiShipment is
         uint256 nonce = userNonces[caller];
         bytes32 messageHash = keccak256(
             abi.encodePacked(
-                caller,
-                packageId,
-                keccak256(bytes(innerSecret)),
-                nonce,
-                deadline,
-                block.chainid,
-                address(this)
+                caller, packageId, keccak256(bytes(innerSecret)), nonce, deadline, block.chainid, address(this)
             )
         );
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            messageHash
-        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
             revert InvalidSignature();
         }
@@ -279,41 +217,25 @@ contract SellerPadiShipment is
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic signature from the backend signer.
      */
-    function disputeDelivery(
-        bytes32 packageId,
-        string calldata reason,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
+    function disputeDelivery(bytes32 packageId, string calldata reason, uint256 deadline, bytes calldata signature)
+        external
+    {
         if (block.timestamp > deadline) revert SignatureExpired();
 
         Shipment storage shipment = _shipments[packageId];
-        if (shipment.packageId == bytes32(0))
+        if (shipment.packageId == bytes32(0)) {
             revert ShipmentNotFound(packageId);
+        }
         if (shipment.status != Status.InTransit) {
-            revert InvalidStatusTransition(
-                packageId,
-                shipment.status,
-                Status.Disputed
-            );
+            revert InvalidStatusTransition(packageId, shipment.status, Status.Disputed);
         }
 
         address caller = msg.sender;
         uint256 nonce = userNonces[caller];
         bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                caller,
-                packageId,
-                keccak256(bytes(reason)),
-                nonce,
-                deadline,
-                block.chainid,
-                address(this)
-            )
+            abi.encodePacked(caller, packageId, keccak256(bytes(reason)), nonce, deadline, block.chainid, address(this))
         );
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            messageHash
-        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
             revert InvalidSignature();
         }
@@ -325,6 +247,174 @@ contract SellerPadiShipment is
         shipment.lastUpdated = timestamp;
 
         emit ShipmentDisputed(packageId, reason, timestamp);
+    }
+
+    /**
+     * @notice Hands a disputed package back to a dispatch rider for return transit.
+     * @param packageId The unique ID of the package.
+     * @param rider The dispatch rider taking custody of the returned parcel.
+     * @param deadline The signature expiration timestamp.
+     * @param signature The cryptographic signature from the backend signer.
+     */
+    function handoverReturn(bytes32 packageId, address rider, uint256 deadline, bytes calldata signature) external {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (rider == address(0)) revert InvalidHandlerAddress();
+
+        Shipment storage shipment = _shipments[packageId];
+        if (shipment.packageId == bytes32(0)) {
+            revert ShipmentNotFound(packageId);
+        }
+        if (shipment.status != Status.Disputed && shipment.status != Status.ReturnTransit) {
+            revert InvalidStatusTransition(packageId, shipment.status, Status.ReturnTransit);
+        }
+
+        address caller = msg.sender;
+        uint256 nonce = userNonces[caller];
+        bytes32 messageHash =
+            keccak256(abi.encodePacked(caller, packageId, rider, nonce, deadline, block.chainid, address(this)));
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
+            revert InvalidSignature();
+        }
+
+        userNonces[caller] = nonce + 1;
+        uint40 timestamp = uint40(block.timestamp);
+
+        shipment.currentHandler = rider;
+        shipment.status = Status.ReturnTransit;
+        shipment.lastUpdated = timestamp;
+
+        emit ShipmentReturnHandover(packageId, rider, timestamp);
+    }
+
+    /**
+     * @notice Confirms physical receipt of a returned package at the merchant's store branch.
+     * @param packageId The unique ID of the package.
+     * @param deadline The signature expiration timestamp.
+     * @param signature The cryptographic signature from the backend signer.
+     */
+    function confirmStoreReturn(bytes32 packageId, uint256 deadline, bytes calldata signature) external {
+        if (block.timestamp > deadline) revert SignatureExpired();
+
+        Shipment storage shipment = _shipments[packageId];
+        if (shipment.packageId == bytes32(0)) {
+            revert ShipmentNotFound(packageId);
+        }
+        if (shipment.status != Status.ReturnTransit) {
+            revert InvalidStatusTransition(packageId, shipment.status, Status.ReturnedToStore);
+        }
+
+        address caller = msg.sender;
+        uint256 nonce = userNonces[caller];
+        bytes32 messageHash =
+            keccak256(abi.encodePacked(caller, packageId, nonce, deadline, block.chainid, address(this)));
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
+            revert InvalidSignature();
+        }
+
+        userNonces[caller] = nonce + 1;
+        uint40 timestamp = uint40(block.timestamp);
+
+        shipment.currentHandler = shipment.shipper;
+        shipment.status = Status.ReturnedToStore;
+        shipment.lastUpdated = timestamp;
+
+        emit ShipmentReturnedToStore(packageId, shipment.shipper, timestamp);
+    }
+
+    /**
+     * @notice Concludes dispute settlement at the store (Path A: refund issued / goods restocked).
+     * @param packageId The unique ID of the package.
+     * @param resolutionType Description of settlement (e.g. "Refunded", "Restocked").
+     * @param deadline The signature expiration timestamp.
+     * @param signature The cryptographic signature from the backend signer.
+     */
+    function resolveDispute(
+        bytes32 packageId,
+        string calldata resolutionType,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        if (block.timestamp > deadline) revert SignatureExpired();
+
+        Shipment storage shipment = _shipments[packageId];
+        if (shipment.packageId == bytes32(0)) {
+            revert ShipmentNotFound(packageId);
+        }
+        if (shipment.status != Status.ReturnedToStore) {
+            revert InvalidStatusTransition(packageId, shipment.status, Status.Resolved);
+        }
+
+        address caller = msg.sender;
+        uint256 nonce = userNonces[caller];
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(
+                caller, packageId, keccak256(bytes(resolutionType)), nonce, deadline, block.chainid, address(this)
+            )
+        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
+            revert InvalidSignature();
+        }
+
+        userNonces[caller] = nonce + 1;
+        uint40 timestamp = uint40(block.timestamp);
+
+        shipment.status = Status.Resolved;
+        shipment.lastUpdated = timestamp;
+
+        emit ShipmentResolved(packageId, resolutionType, timestamp);
+    }
+
+    /**
+     * @notice Re-dispatches a replacement package from the store with a fresh scratch-off PIN (Path B).
+     * @param packageId The unique ID of the package.
+     * @param newPackageHash The hash of the new scratch-off secret PIN for redelivery.
+     * @param nextHandler The dispatch rider taking custody of the replacement parcel.
+     * @param deadline The signature expiration timestamp.
+     * @param signature The cryptographic signature from the backend signer.
+     */
+    function redispatchShipment(
+        bytes32 packageId,
+        bytes32 newPackageHash,
+        address nextHandler,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (newPackageHash == bytes32(0)) revert InvalidPackageHash();
+        if (nextHandler == address(0)) revert InvalidHandlerAddress();
+
+        Shipment storage shipment = _shipments[packageId];
+        if (shipment.packageId == bytes32(0)) {
+            revert ShipmentNotFound(packageId);
+        }
+        if (shipment.status != Status.ReturnedToStore) {
+            revert InvalidStatusTransition(packageId, shipment.status, Status.InTransit);
+        }
+
+        address caller = msg.sender;
+        uint256 nonce = userNonces[caller];
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(
+                caller, packageId, newPackageHash, nextHandler, nonce, deadline, block.chainid, address(this)
+            )
+        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
+            revert InvalidSignature();
+        }
+
+        userNonces[caller] = nonce + 1;
+        uint40 timestamp = uint40(block.timestamp);
+
+        shipment.packageHash = newPackageHash;
+        shipment.currentHandler = nextHandler;
+        shipment.status = Status.InTransit;
+        shipment.lastUpdated = timestamp;
+
+        emit ShipmentRedispatched(packageId, newPackageHash, nextHandler, timestamp);
     }
 
     /**
@@ -345,19 +435,16 @@ contract SellerPadiShipment is
      * @param packageId The ID of the shipment.
      * @return The shipment structure.
      */
-    function getShipment(
-        bytes32 packageId
-    ) external view returns (Shipment memory) {
+    function getShipment(bytes32 packageId) external view returns (Shipment memory) {
         Shipment memory shipment = _shipments[packageId];
-        if (shipment.packageId == bytes32(0))
+        if (shipment.packageId == bytes32(0)) {
             revert ShipmentNotFound(packageId);
+        }
         return shipment;
     }
 
     // --- UUPS Upgrade Authorization ---
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // --- Storage Gap for Future Upgrades ---
     uint256[50] private __gap;
