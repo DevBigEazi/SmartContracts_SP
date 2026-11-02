@@ -13,10 +13,10 @@ interface IUUPSUpgradeable {
  * @notice Deploys a new implementation of SellerPadiShipment and upgrades the UUPS Proxy on Avalanche C-Chain.
  */
 contract UpgradeSellerPadiShipmentScript is Script {
-    address public constant MAINNET_PROXY_ADDRESS = 0xce4bF97e85212d9121e52c3F6fb2C8021Bf30012;
-
+    address public constant PROXY_ADDRESS = 0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381;
+    // 0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381 fuji testnet
     function run() external {
-        address proxyAddress = vm.envOr("SHIPMENT_PROXY_ADDRESS", MAINNET_PROXY_ADDRESS);
+        address proxyAddress = vm.envOr("SHIPMENT_PROXY_ADDRESS", PROXY_ADDRESS);
         console2.log("Upgrading SellerPadiShipment UUPS Proxy at:", proxyAddress);
 
         vm.startBroadcast();
