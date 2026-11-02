@@ -113,7 +113,7 @@ forge script scripts/SellerPadiShipment.s.sol:SellerPadiShipmentScript \
 - **SellerPadiReceipt Proxy:** [`0x910Ba81487FE94E97A30EF72B139a3237b579ea5`](https://testnet.snowtrace.io/address/0x910Ba81487FE94E97A30EF72B139a3237b579ea5)
 - **SellerPadiReceipt Implementation:** [`0x234c7c29B22bdB16E16A8C3eB75514622094e1f4`](https://testnet.snowtrace.io/address/0x234c7c29B22bdB16E16A8C3eB75514622094e1f4)
 - **SellerPadiShipment Proxy:** [`0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381`](https://testnet.snowtrace.io/address/0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381)
-- **SellerPadiShipment Implementation:** [`0x9320D21c284288452fA75b70636543108e5a3986`](https://testnet.snowtrace.io/address/0x9320D21c284288452fA75b70636543108e5a3986)
+- **SellerPadiShipment Implementation:** [`0xf3a085BeBc772f4CD530584f575996554d77c99a`](https://testnet.snowtrace.io/address/0xf3a085bebc772f4cd530584f575996554d77c99a)
 
 ### Avalanche C-Chain Mainnet (Chain ID `43114`)
 

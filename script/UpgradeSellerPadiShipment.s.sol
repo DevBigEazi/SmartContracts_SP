@@ -15,6 +15,7 @@ interface IUUPSUpgradeable {
 contract UpgradeSellerPadiShipmentScript is Script {
     address public constant PROXY_ADDRESS = 0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381;
     // 0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381 fuji testnet
+
     function run() external {
         address proxyAddress = vm.envOr("SHIPMENT_PROXY_ADDRESS", PROXY_ADDRESS);
         console2.log("Upgrading SellerPadiShipment UUPS Proxy at:", proxyAddress);
