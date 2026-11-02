@@ -12,11 +12,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
  * @notice A decentralized UUPS-upgradeable digital receipt and sales proof registry on Avalanche C-Chain.
  * @dev Anchors cryptographic receipt hashes and lifecycle states using gasless backend witness signatures.
  */
-contract SellerPadiReceipt is
-    Initializable,
-    UUPSUpgradeable,
-    OwnableUpgradeable
-{
+contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     // --- Enums ---
     enum Status {
         Issued,
@@ -41,21 +37,10 @@ contract SellerPadiReceipt is
 
     // --- Events ---
     event ReceiptRegistered(
-        bytes32 indexed receiptHash,
-        address indexed merchant,
-        bytes32 indexed parentReceiptHash,
-        uint256 timestamp
+        bytes32 indexed receiptHash, address indexed merchant, bytes32 indexed parentReceiptHash, uint256 timestamp
     );
-    event ReceiptVoided(
-        bytes32 indexed receiptHash,
-        address indexed merchant,
-        string reason,
-        uint256 timestamp
-    );
-    event BackendSignerChanged(
-        address indexed oldSigner,
-        address indexed newSigner
-    );
+    event ReceiptVoided(bytes32 indexed receiptHash, address indexed merchant, string reason, uint256 timestamp);
+    event BackendSignerChanged(address indexed oldSigner, address indexed newSigner);
 
     // --- Custom Errors ---
     error ReceiptNotFound(bytes32 receiptHash);
@@ -94,12 +79,9 @@ contract SellerPadiReceipt is
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic witness signature from the backend signer.
      */
-    function registerReceipt(
-        bytes32 receiptHash,
-        bytes32 parentReceiptHash,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
+    function registerReceipt(bytes32 receiptHash, bytes32 parentReceiptHash, uint256 deadline, bytes calldata signature)
+        external
+    {
         if (block.timestamp > deadline) revert SignatureExpired();
         if (receiptHash == bytes32(0)) revert InvalidReceiptHash();
         if (_receipts[receiptHash].receiptHash != bytes32(0)) {
@@ -109,10 +91,7 @@ contract SellerPadiReceipt is
         // If referencing a parent receipt, verify the parent exists and was voided
         if (parentReceiptHash != bytes32(0)) {
             ReceiptRecord storage parent = _receipts[parentReceiptHash];
-            if (
-                parent.receiptHash == bytes32(0) ||
-                parent.status != Status.Voided
-            ) {
+            if (parent.receiptHash == bytes32(0) || parent.status != Status.Voided) {
                 revert InvalidParentReceipt(parentReceiptHash);
             }
         }
@@ -120,19 +99,9 @@ contract SellerPadiReceipt is
         address merchant = msg.sender;
         uint256 nonce = userNonces[merchant];
         bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                merchant,
-                receiptHash,
-                parentReceiptHash,
-                nonce,
-                deadline,
-                block.chainid,
-                address(this)
-            )
+            abi.encodePacked(merchant, receiptHash, parentReceiptHash, nonce, deadline, block.chainid, address(this))
         );
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            messageHash
-        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
             revert InvalidSignature();
         }
@@ -149,12 +118,7 @@ contract SellerPadiReceipt is
             voidedAt: 0
         });
 
-        emit ReceiptRegistered(
-            receiptHash,
-            merchant,
-            parentReceiptHash,
-            timestamp
-        );
+        emit ReceiptRegistered(receiptHash, merchant, parentReceiptHash, timestamp);
     }
 
     /**
@@ -164,19 +128,18 @@ contract SellerPadiReceipt is
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic witness signature from the backend signer.
      */
-    function voidReceipt(
-        bytes32 receiptHash,
-        string calldata reason,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
+    function voidReceipt(bytes32 receiptHash, string calldata reason, uint256 deadline, bytes calldata signature)
+        external
+    {
         if (block.timestamp > deadline) revert SignatureExpired();
 
         ReceiptRecord storage receipt = _receipts[receiptHash];
-        if (receipt.receiptHash == bytes32(0))
+        if (receipt.receiptHash == bytes32(0)) {
             revert ReceiptNotFound(receiptHash);
-        if (receipt.status == Status.Voided)
+        }
+        if (receipt.status == Status.Voided) {
             revert ReceiptAlreadyVoided(receiptHash);
+        }
 
         address caller = msg.sender;
         if (caller != receipt.merchant && caller != owner()) {
@@ -186,18 +149,10 @@ contract SellerPadiReceipt is
         uint256 nonce = userNonces[caller];
         bytes32 messageHash = keccak256(
             abi.encodePacked(
-                caller,
-                receiptHash,
-                keccak256(bytes(reason)),
-                nonce,
-                deadline,
-                block.chainid,
-                address(this)
+                caller, receiptHash, keccak256(bytes(reason)), nonce, deadline, block.chainid, address(this)
             )
         );
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            messageHash
-        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
             revert InvalidSignature();
         }
@@ -229,19 +184,16 @@ contract SellerPadiReceipt is
      * @param receiptHash The cryptographic hash of the receipt.
      * @return The ReceiptRecord structure.
      */
-    function getReceipt(
-        bytes32 receiptHash
-    ) external view returns (ReceiptRecord memory) {
+    function getReceipt(bytes32 receiptHash) external view returns (ReceiptRecord memory) {
         ReceiptRecord memory receipt = _receipts[receiptHash];
-        if (receipt.receiptHash == bytes32(0))
+        if (receipt.receiptHash == bytes32(0)) {
             revert ReceiptNotFound(receiptHash);
+        }
         return receipt;
     }
 
     // --- UUPS Upgrade Authorization ---
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // --- Storage Gap for Future Upgrades ---
     uint256[50] private __gap;
