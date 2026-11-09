@@ -62,6 +62,23 @@ contract SellerPadiReceiptTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    function getBatchSignature(
+        address relayerAddr,
+        bytes32 merkleRoot,
+        uint256 recordCount,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(
+                relayerAddr, merkleRoot, recordCount, nonce, deadline, block.chainid, address(sellerPadiReceipt)
+            )
+        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(backendPrivateKey, ethSignedMessageHash);
+        return abi.encodePacked(r, s, v);
+    }
+
     function getVoidSignature(
         address callerAddr,
         bytes32 receiptHash,
@@ -330,5 +347,122 @@ contract SellerPadiReceiptTest is Test {
         vm.prank(otherUser);
         vm.expectRevert();
         sellerPadiReceipt.upgradeToAndCall(address(v2Impl), "");
+    }
+
+    // --- Merkle Batch Tests ---
+
+    function _hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+        return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+    }
+
+    function test_RegisterBatch_Success() public {
+        bytes32 leaf0 = keccak256("RECEIPT-001");
+        bytes32 leaf1 = keccak256("RECEIPT-002");
+        bytes32 merkleRoot = _hashPair(leaf0, leaf1);
+        uint32 recordCount = 2;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        address relayer = address(0xAA);
+        bytes memory sig = getBatchSignature(relayer, merkleRoot, recordCount, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, false, true);
+        emit SellerPadiReceipt.ReceiptBatchRegistered(merkleRoot, relayer, recordCount, block.timestamp);
+        sellerPadiReceipt.registerReceiptBatch(merkleRoot, recordCount, deadline, sig);
+
+        // Verify batch storage
+        SellerPadiReceipt.BatchRecord memory batch = sellerPadiReceipt.getBatch(merkleRoot);
+        assertEq(batch.merkleRoot, merkleRoot);
+        assertEq(batch.relayer, relayer);
+        assertEq(batch.recordCount, recordCount);
+        assertEq(batch.anchoredAt, uint40(block.timestamp));
+
+        // Verify Merkle inclusion proofs
+        bytes32[] memory proof0 = new bytes32[](1);
+        proof0[0] = leaf1;
+        assertTrue(sellerPadiReceipt.verifyReceiptProof(leaf0, proof0, merkleRoot));
+
+        bytes32[] memory proof1 = new bytes32[](1);
+        proof1[0] = leaf0;
+        assertTrue(sellerPadiReceipt.verifyReceiptProof(leaf1, proof1, merkleRoot));
+
+        // Tampered leaf fails
+        bytes32 fakeLeaf = keccak256("RECEIPT-FAKE");
+        assertFalse(sellerPadiReceipt.verifyReceiptProof(fakeLeaf, proof0, merkleRoot));
+
+        // Non-existent batch fails
+        bytes32 nonExistentRoot = keccak256("UNKNOWN-ROOT");
+        assertFalse(sellerPadiReceipt.verifyReceiptProof(leaf0, proof0, nonExistentRoot));
+    }
+
+    function test_RegisterBatch_ZeroRootReverts() public {
+        address relayer = address(0xAA);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = getBatchSignature(relayer, bytes32(0), 10, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiReceipt.InvalidMerkleRoot.selector);
+        sellerPadiReceipt.registerReceiptBatch(bytes32(0), 10, deadline, sig);
+    }
+
+    function test_RegisterBatch_ZeroCountReverts() public {
+        address relayer = address(0xAA);
+        bytes32 root = keccak256("SOME_ROOT");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = getBatchSignature(relayer, root, 0, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiReceipt.InvalidRecordCount.selector);
+        sellerPadiReceipt.registerReceiptBatch(root, 0, deadline, sig);
+    }
+
+    function test_RegisterBatch_ReplayReverts() public {
+        bytes32 root = keccak256("REPLAY_ROOT");
+        uint32 count = 5;
+        uint256 deadline = block.timestamp + 1 hours;
+        address relayer = address(0xAA);
+        bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
+
+        vm.prank(relayer);
+        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, sig);
+
+        // Try registering again with the same signature -> Reverts with BatchAlreadyExists
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SellerPadiReceipt.BatchAlreadyExists.selector, root));
+        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, sig);
+    }
+
+    function test_RegisterBatch_RevertIfExpired() public {
+        bytes32 root = keccak256("EXPIRED_ROOT");
+        uint32 count = 3;
+        uint256 deadline = block.timestamp - 1;
+        address relayer = address(0xAA);
+        bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiReceipt.SignatureExpired.selector);
+        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, sig);
+    }
+
+    function test_RegisterBatch_InvalidSignature() public {
+        bytes32 root = keccak256("INVALID_SIG_ROOT");
+        uint32 count = 3;
+        uint256 deadline = block.timestamp + 1 hours;
+        address relayer = address(0xAA);
+
+        // Sign with unauthorized key
+        uint256 badKey = 0x123456789;
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                relayer, root, uint256(count), uint256(0), deadline, block.chainid, address(sellerPadiReceipt)
+            )
+        );
+        bytes32 ethSigned = MessageHashUtils.toEthSignedMessageHash(msgHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(badKey, ethSigned);
+        bytes memory badSig = abi.encodePacked(r, s, v);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiReceipt.InvalidSignature.selector);
+        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, badSig);
     }
 }

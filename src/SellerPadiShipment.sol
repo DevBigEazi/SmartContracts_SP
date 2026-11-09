@@ -6,6 +6,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
  * @title SellerPadiShipment
@@ -36,10 +37,18 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
         uint40 lastUpdated;
     }
 
+    struct BatchRecord {
+        bytes32 merkleRoot; // keccak256 root of the Merkle tree of batched package dispatch hashes
+        address relayer; // Address of the relayer submitting the batch
+        uint32 recordCount; // Number of shipments anchored in this batch
+        uint40 anchoredAt; // Block timestamp when the batch was anchored
+    }
+
     // --- State Variables ---
     address public backendSigner;
     mapping(bytes32 => Shipment) private _shipments;
     mapping(address => uint256) public userNonces;
+    mapping(bytes32 => BatchRecord) private _batches;
 
     // --- Events ---
     event ShipmentRegistered(
@@ -54,13 +63,20 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
     event ShipmentRedispatched(
         bytes32 indexed packageId, bytes32 newPackageHash, address indexed nextHandler, uint256 timestamp
     );
+    event ShipmentBatchRegistered(
+        bytes32 indexed merkleRoot, address indexed relayer, uint32 recordCount, uint256 timestamp
+    );
     event BackendSignerChanged(address indexed oldSigner, address indexed newSigner);
 
     // --- Custom Errors ---
     error ShipmentNotFound(bytes32 packageId);
     error ShipmentAlreadyExists(bytes32 packageId);
+    error BatchAlreadyExists(bytes32 merkleRoot);
+    error BatchNotFound(bytes32 merkleRoot);
     error InvalidStatusTransition(bytes32 packageId, Status currentStatus, Status targetStatus);
     error InvalidPackageHash();
+    error InvalidMerkleRoot();
+    error InvalidRecordCount();
     error InvalidShipperAddress();
     error InvalidHandlerAddress();
     error InvalidBackendSigner();
@@ -125,6 +141,44 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
         });
 
         emit ShipmentRegistered(packageId, shipper, packageHash, timestamp);
+    }
+
+    /**
+     * @notice Anchors a cryptographic Merkle root representing a batch of dispatched packages.
+     * @dev Reduces on-chain gas costs by ~99% by anchoring hundreds of shipments in a single transaction.
+     * @param merkleRoot The keccak256 root of the Merkle tree formed by batched package hashes.
+     * @param recordCount The count of shipment records included in this batch.
+     * @param deadline The signature expiration timestamp.
+     * @param signature The cryptographic witness signature from the backend signer.
+     */
+    function registerShipmentBatch(bytes32 merkleRoot, uint32 recordCount, uint256 deadline, bytes calldata signature)
+        external
+    {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (merkleRoot == bytes32(0)) revert InvalidMerkleRoot();
+        if (recordCount == 0) revert InvalidRecordCount();
+        if (_batches[merkleRoot].merkleRoot != bytes32(0)) {
+            revert BatchAlreadyExists(merkleRoot);
+        }
+
+        address relayer = msg.sender;
+        uint256 nonce = userNonces[relayer];
+
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(relayer, merkleRoot, uint256(recordCount), nonce, deadline, block.chainid, address(this))
+        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
+            revert InvalidSignature();
+        }
+
+        userNonces[relayer] = nonce + 1;
+        uint40 timestamp = uint40(block.timestamp);
+
+        _batches[merkleRoot] =
+            BatchRecord({merkleRoot: merkleRoot, relayer: relayer, recordCount: recordCount, anchoredAt: timestamp});
+
+        emit ShipmentBatchRegistered(merkleRoot, relayer, recordCount, timestamp);
     }
 
     /**
@@ -443,9 +497,40 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
         return shipment;
     }
 
+    /**
+     * @notice Retrieves batch record details.
+     * @param merkleRoot The Merkle root hash of the batch.
+     * @return The BatchRecord structure.
+     */
+    function getBatch(bytes32 merkleRoot) external view returns (BatchRecord memory) {
+        BatchRecord memory batch = _batches[merkleRoot];
+        if (batch.merkleRoot == bytes32(0)) {
+            revert BatchNotFound(merkleRoot);
+        }
+        return batch;
+    }
+
+    /**
+     * @notice Verifies whether a specific package hash is cryptographically included in an anchored batch.
+     * @param packageHash The hash of the package (keccak256(packageId, innerSecretHash)).
+     * @param proof Array of sibling branch hashes leading up to the Merkle root.
+     * @param merkleRoot The anchored batch Merkle root.
+     * @return True if the cryptographic inclusion proof is valid.
+     */
+    function verifyShipmentProof(bytes32 packageHash, bytes32[] calldata proof, bytes32 merkleRoot)
+        external
+        view
+        returns (bool)
+    {
+        if (_batches[merkleRoot].merkleRoot == bytes32(0)) {
+            return false;
+        }
+        return MerkleProof.verify(proof, merkleRoot, packageHash);
+    }
+
     // --- UUPS Upgrade Authorization ---
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    // --- Storage Gap for Future Upgrades ---
-    uint256[50] private __gap;
+    // --- Storage Gap for Future Upgrades (50 - 1 used by _batches) ---
+    uint256[49] private __gap;
 }

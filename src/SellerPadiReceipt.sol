@@ -6,11 +6,12 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
  * @title SellerPadiReceipt
  * @notice A decentralized UUPS-upgradeable digital receipt and sales proof registry on Avalanche C-Chain.
- * @dev Anchors cryptographic receipt hashes and lifecycle states using gasless backend witness signatures.
+ * @dev Anchors individual cryptographic receipt hashes and batched Merkle roots using gasless backend witness signatures.
  */
 contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     // --- Enums ---
@@ -30,23 +31,38 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
         uint40 voidedAt; // Block timestamp when voided (0 if active)
     }
 
+    struct BatchRecord {
+        bytes32 merkleRoot; // keccak256 root of the Merkle tree of batched receipt hashes
+        address relayer; // Address of the relayer submitting the batch
+        uint32 recordCount; // Number of receipts anchored in this batch
+        uint40 anchoredAt; // Block timestamp when the batch was anchored
+    }
+
     // --- State Variables ---
     address public backendSigner;
     mapping(bytes32 => ReceiptRecord) private _receipts;
     mapping(address => uint256) public userNonces;
+    mapping(bytes32 => BatchRecord) private _batches;
 
     // --- Events ---
     event ReceiptRegistered(
         bytes32 indexed receiptHash, address indexed merchant, bytes32 indexed parentReceiptHash, uint256 timestamp
     );
     event ReceiptVoided(bytes32 indexed receiptHash, address indexed merchant, string reason, uint256 timestamp);
+    event ReceiptBatchRegistered(
+        bytes32 indexed merkleRoot, address indexed relayer, uint32 recordCount, uint256 timestamp
+    );
     event BackendSignerChanged(address indexed oldSigner, address indexed newSigner);
 
     // --- Custom Errors ---
     error ReceiptNotFound(bytes32 receiptHash);
     error ReceiptAlreadyExists(bytes32 receiptHash);
     error ReceiptAlreadyVoided(bytes32 receiptHash);
+    error BatchAlreadyExists(bytes32 merkleRoot);
+    error BatchNotFound(bytes32 merkleRoot);
     error InvalidReceiptHash();
+    error InvalidMerkleRoot();
+    error InvalidRecordCount();
     error InvalidParentReceipt(bytes32 parentReceiptHash);
     error InvalidBackendSigner();
     error SignatureExpired();
@@ -122,6 +138,44 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
     }
 
     /**
+     * @notice Anchors a cryptographic Merkle root representing a batch of finalized receipts.
+     * @dev Reduces on-chain gas costs by ~99% by anchoring hundreds of receipts in a single transaction.
+     * @param merkleRoot The keccak256 root of the Merkle tree formed by batched receipt leaf hashes.
+     * @param recordCount The count of receipt records included in this batch.
+     * @param deadline The signature expiration timestamp.
+     * @param signature The cryptographic witness signature from the backend signer.
+     */
+    function registerReceiptBatch(bytes32 merkleRoot, uint32 recordCount, uint256 deadline, bytes calldata signature)
+        external
+    {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (merkleRoot == bytes32(0)) revert InvalidMerkleRoot();
+        if (recordCount == 0) revert InvalidRecordCount();
+        if (_batches[merkleRoot].merkleRoot != bytes32(0)) {
+            revert BatchAlreadyExists(merkleRoot);
+        }
+
+        address relayer = msg.sender;
+        uint256 nonce = userNonces[relayer];
+
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(relayer, merkleRoot, uint256(recordCount), nonce, deadline, block.chainid, address(this))
+        );
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        if (ECDSA.recover(ethSignedMessageHash, signature) != backendSigner) {
+            revert InvalidSignature();
+        }
+
+        userNonces[relayer] = nonce + 1;
+        uint40 timestamp = uint40(block.timestamp);
+
+        _batches[merkleRoot] =
+            BatchRecord({merkleRoot: merkleRoot, relayer: relayer, recordCount: recordCount, anchoredAt: timestamp});
+
+        emit ReceiptBatchRegistered(merkleRoot, relayer, recordCount, timestamp);
+    }
+
+    /**
      * @notice Voids an issued receipt with backend witness signature validation.
      * @param receiptHash The keccak256 hash of the receipt to void.
      * @param reason The audit reason for voiding the receipt.
@@ -192,9 +246,40 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
         return receipt;
     }
 
+    /**
+     * @notice Retrieves batch record details.
+     * @param merkleRoot The Merkle root hash of the batch.
+     * @return The BatchRecord structure.
+     */
+    function getBatch(bytes32 merkleRoot) external view returns (BatchRecord memory) {
+        BatchRecord memory batch = _batches[merkleRoot];
+        if (batch.merkleRoot == bytes32(0)) {
+            revert BatchNotFound(merkleRoot);
+        }
+        return batch;
+    }
+
+    /**
+     * @notice Verifies whether a specific receipt leaf hash is cryptographically included in an anchored batch.
+     * @param receiptHash The leaf hash of the receipt.
+     * @param proof Array of sibling branch hashes leading up to the Merkle root.
+     * @param merkleRoot The anchored batch Merkle root.
+     * @return True if the cryptographic inclusion proof is valid.
+     */
+    function verifyReceiptProof(bytes32 receiptHash, bytes32[] calldata proof, bytes32 merkleRoot)
+        external
+        view
+        returns (bool)
+    {
+        if (_batches[merkleRoot].merkleRoot == bytes32(0)) {
+            return false;
+        }
+        return MerkleProof.verify(proof, merkleRoot, receiptHash);
+    }
+
     // --- UUPS Upgrade Authorization ---
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    // --- Storage Gap for Future Upgrades ---
-    uint256[50] private __gap;
+    // --- Storage Gap for Future Upgrades (50 - 1 used by _batches) ---
+    uint256[49] private __gap;
 }
