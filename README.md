@@ -9,13 +9,17 @@
 SellerPadi's on-chain architecture utilizes the **ERC-1967 UUPS (Universal Upgradeable Proxy Standard)** pattern with backend cryptographic signer witness verification:
 
 1. **`SellerPadiReceipt.sol`**:
-   - Anchors SHA-256 hashes of digital sales receipts.
+   - Anchors SHA-256 hashes of digital sales receipts individually or in gas-optimized Merkle batches.
+   - **Hybrid Merkle Root Batching**: Supports `registerReceiptBatch(merkleRoot, recordCount, deadline, signature)` to anchor 100+ receipts into a single Merkle root, cutting relayer gas costs by ~99%.
+   - **Cryptographic Inclusion Verification**: Stateless inclusion verification via `verifyReceiptProof(receiptHash, proof, merkleRoot)`.
    - Enforces audit-safe voiding controls (only the issuing merchant/cashier can void a receipt with a mandatory reason string).
    - Manages store credit settlement records on-chain.
-   - Gasless customer and merchant experience: uses backend EIP-712 / message hash signatures with nonce tracking to prevent replay attacks.
+   - Gasless customer and merchant experience: uses backend witness signatures with nonce tracking to prevent replay attacks.
 
 2. **`SellerPadiShipment.sol`**:
    - Manages the lifecycle of tracked package dispatches (`Created` → `InTransit` → `Delivered` → `Verified` / `Disputed` → `ReturnTransit` → `ReturnedToStore` → `Resolved` or `InTransit`).
+   - **Hybrid Merkle Root Batching**: Supports `registerShipmentBatch(merkleRoot, recordCount, deadline, signature)` to anchor bulk dispatches in a single transaction.
+   - **Cryptographic Inclusion Verification**: Stateless inclusion verification via `verifyShipmentProof(packageHash, proof, merkleRoot)`.
    - Supports reverse logistics: disputed packages transition through return rider handover (`ReturnTransit`) and store return confirmation (`ReturnedToStore`).
    - Store settlement branches: Path A resolves the dispute (`Resolved`), while Path B re-dispatches fresh replacement goods (`InTransit`) with a new scratch-off secret PIN (`newPackageHash`) and new rider assignment.
    - Integrates dual-layer physical QR labels with scratch-off inner PIN verifications (`SP-XXXX`).
@@ -104,6 +108,26 @@ forge script scripts/SellerPadiShipment.s.sol:SellerPadiShipmentScript \
   --verify
 ```
 
+### 3. Upgrading UUPS Implementation Contracts
+
+When deploying upgraded contract logic with new features (e.g. Merkle batching), deploy the new implementation and upgrade the UUPS proxy:
+
+```shell
+# Upgrade SellerPadiReceipt Implementation
+forge script script/UpgradeSellerPadiReceipt.s.sol:UpgradeSellerPadiReceiptScript \
+  --rpc-url avalanche-fuji \
+  --account deployer \
+  --broadcast \
+  --verify
+
+# Upgrade SellerPadiShipment Implementation
+forge script script/UpgradeSellerPadiShipment.s.sol:UpgradeSellerPadiShipmentScript \
+  --rpc-url avalanche-fuji \
+  --account deployer \
+ --broadcast \
+  --verify
+```
+
 ---
 
 ## Deployed Contract Addresses
@@ -111,9 +135,9 @@ forge script scripts/SellerPadiShipment.s.sol:SellerPadiShipmentScript \
 ### Avalanche Fuji Testnet (Chain ID `43113`)
 
 - **SellerPadiReceipt Proxy:** [`0x910Ba81487FE94E97A30EF72B139a3237b579ea5`](https://testnet.snowtrace.io/address/0x910Ba81487FE94E97A30EF72B139a3237b579ea5)
-- **SellerPadiReceipt Implementation:** [`0x234c7c29B22bdB16E16A8C3eB75514622094e1f4`](https://testnet.snowtrace.io/address/0x234c7c29B22bdB16E16A8C3eB75514622094e1f4)
+- **SellerPadiReceipt Implementation:** [`0xdA4641D00607843802AA27EcC6888AA92C73Df02`](https://testnet.snowtrace.io/address/0xdA4641D00607843802AA27EcC6888AA92C73Df02)
 - **SellerPadiShipment Proxy:** [`0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381`](https://testnet.snowtrace.io/address/0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381)
-- **SellerPadiShipment Implementation:** [`0xf3a085BeBc772f4CD530584f575996554d77c99a`](https://testnet.snowtrace.io/address/0xf3a085bebc772f4cd530584f575996554d77c99a)
+- **SellerPadiShipment Implementation:** [`0xd1CC85C87c6B15F8676d8e029196A4A06ebCE75C`](https://testnet.snowtrace.io/address/0xd1CC85C87c6B15F8676d8e029196A4A06ebCE75C)
 
 ### Avalanche C-Chain Mainnet (Chain ID `43114`)
 
