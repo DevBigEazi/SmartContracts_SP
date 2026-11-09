@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {SellerPadiShipment} from "../src/SellerPadiShipment.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract SellerPadiShipmentMockV2 is SellerPadiShipment {
     function version() external pure returns (string memory) {
@@ -59,6 +60,23 @@ contract SellerPadiShipmentTest is Test {
         bytes32 messageHash = keccak256(
             abi.encodePacked(
                 shipperAddr, packageId, packageHash, nonce, deadline, block.chainid, address(sellerPadiShipment)
+            )
+        );
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(backendPrivateKey, ethSignedMessageHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function getBatchSignature(
+        address relayerAddr,
+        bytes32 merkleRoot,
+        uint256 recordCount,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(
+                relayerAddr, merkleRoot, recordCount, nonce, deadline, block.chainid, address(sellerPadiShipment)
             )
         );
         bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
@@ -546,5 +564,122 @@ contract SellerPadiShipmentTest is Test {
         bytes memory emptySig = hex"";
         vm.expectRevert(SellerPadiShipment.SignatureExpired.selector);
         sellerPadiShipment.handoverReturn(TEST_PACKAGE_ID, handler, deadline, emptySig);
+    }
+
+    // --- Merkle Batch Tests ---
+
+    function _hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+        return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+    }
+
+    function test_RegisterBatch_Success() public {
+        bytes32 leaf0 = keccak256("PACKAGE-001");
+        bytes32 leaf1 = keccak256("PACKAGE-002");
+        bytes32 merkleRoot = _hashPair(leaf0, leaf1);
+        uint32 recordCount = 2;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        address relayer = address(0xBB);
+        bytes memory sig = getBatchSignature(relayer, merkleRoot, recordCount, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, false, true);
+        emit SellerPadiShipment.ShipmentBatchRegistered(merkleRoot, relayer, recordCount, block.timestamp);
+        sellerPadiShipment.registerShipmentBatch(merkleRoot, recordCount, deadline, sig);
+
+        // Verify batch storage
+        SellerPadiShipment.BatchRecord memory batch = sellerPadiShipment.getBatch(merkleRoot);
+        assertEq(batch.merkleRoot, merkleRoot);
+        assertEq(batch.relayer, relayer);
+        assertEq(batch.recordCount, recordCount);
+        assertEq(batch.anchoredAt, uint40(block.timestamp));
+
+        // Verify Merkle inclusion proofs
+        bytes32[] memory proof0 = new bytes32[](1);
+        proof0[0] = leaf1;
+        assertTrue(sellerPadiShipment.verifyShipmentProof(leaf0, proof0, merkleRoot));
+
+        bytes32[] memory proof1 = new bytes32[](1);
+        proof1[0] = leaf0;
+        assertTrue(sellerPadiShipment.verifyShipmentProof(leaf1, proof1, merkleRoot));
+
+        // Tampered leaf fails
+        bytes32 fakeLeaf = keccak256("PACKAGE-FAKE");
+        assertFalse(sellerPadiShipment.verifyShipmentProof(fakeLeaf, proof0, merkleRoot));
+
+        // Non-existent batch fails
+        bytes32 nonExistentRoot = keccak256("UNKNOWN-ROOT");
+        assertFalse(sellerPadiShipment.verifyShipmentProof(leaf0, proof0, nonExistentRoot));
+    }
+
+    function test_RegisterBatch_ZeroRootReverts() public {
+        address relayer = address(0xBB);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = getBatchSignature(relayer, bytes32(0), 10, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiShipment.InvalidMerkleRoot.selector);
+        sellerPadiShipment.registerShipmentBatch(bytes32(0), 10, deadline, sig);
+    }
+
+    function test_RegisterBatch_ZeroCountReverts() public {
+        address relayer = address(0xBB);
+        bytes32 root = keccak256("SOME_ROOT");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = getBatchSignature(relayer, root, 0, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiShipment.InvalidRecordCount.selector);
+        sellerPadiShipment.registerShipmentBatch(root, 0, deadline, sig);
+    }
+
+    function test_RegisterBatch_ReplayReverts() public {
+        bytes32 root = keccak256("REPLAY_ROOT");
+        uint32 count = 5;
+        uint256 deadline = block.timestamp + 1 hours;
+        address relayer = address(0xBB);
+        bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
+
+        vm.prank(relayer);
+        sellerPadiShipment.registerShipmentBatch(root, count, deadline, sig);
+
+        // Try registering again with the same signature -> Reverts with BatchAlreadyExists
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SellerPadiShipment.BatchAlreadyExists.selector, root));
+        sellerPadiShipment.registerShipmentBatch(root, count, deadline, sig);
+    }
+
+    function test_RegisterBatch_RevertIfExpired() public {
+        bytes32 root = keccak256("EXPIRED_ROOT");
+        uint32 count = 3;
+        uint256 deadline = block.timestamp - 1;
+        address relayer = address(0xBB);
+        bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiShipment.SignatureExpired.selector);
+        sellerPadiShipment.registerShipmentBatch(root, count, deadline, sig);
+    }
+
+    function test_RegisterBatch_InvalidSignature() public {
+        bytes32 root = keccak256("INVALID_SIG_ROOT");
+        uint32 count = 3;
+        uint256 deadline = block.timestamp + 1 hours;
+        address relayer = address(0xBB);
+
+        // Sign with unauthorized key
+        uint256 badKey = 0x123456789;
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(
+                relayer, root, uint256(count), uint256(0), deadline, block.chainid, address(sellerPadiShipment)
+            )
+        );
+        bytes32 ethSigned = MessageHashUtils.toEthSignedMessageHash(msgHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(badKey, ethSigned);
+        bytes memory badSig = abi.encodePacked(r, s, v);
+
+        vm.prank(relayer);
+        vm.expectRevert(SellerPadiShipment.InvalidSignature.selector);
+        sellerPadiShipment.registerShipmentBatch(root, count, deadline, badSig);
     }
 }
