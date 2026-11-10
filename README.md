@@ -10,16 +10,16 @@ SellerPadi's on-chain architecture utilizes the **ERC-1967 UUPS (Universal Upgra
 
 1. **`SellerPadiReceipt.sol`**:
    - Anchors SHA-256 hashes of digital sales receipts individually or in gas-optimized Merkle batches.
-   - **Hybrid Merkle Root Batching**: Supports `registerReceiptBatch(merkleRoot, recordCount, deadline, signature)` to anchor 100+ receipts into a single Merkle root, cutting relayer gas costs by ~99%.
-   - **Cryptographic Inclusion Verification**: Stateless inclusion verification via `verifyReceiptProof(receiptHash, proof, merkleRoot)`.
+   - **Unified Merkle Root Batching**: Supports `anchorReceiptBatch(merkleRoot, hashes, deadline, signature)` to anchor 100+ receipts and voids in a single transaction, passing all item hashes in calldata for public block explorer transparency.
+   - **Cryptographic Inclusion Verification**: Stateless inclusion verification via `verifyReceiptProof(receiptHash, proof, merkleRoot)`, `verifyVoidProof(voidLeaf, proof, merkleRoot)`, and general `verifyProof(leaf, proof, merkleRoot)`.
    - Enforces audit-safe voiding controls (only the issuing merchant/cashier can void a receipt with a mandatory reason string).
    - Manages store credit settlement records on-chain.
    - Gasless customer and merchant experience: uses backend witness signatures with nonce tracking to prevent replay attacks.
 
 2. **`SellerPadiShipment.sol`**:
    - Manages the lifecycle of tracked package dispatches (`Created` → `InTransit` → `Delivered` → `Verified` / `Disputed` → `ReturnTransit` → `ReturnedToStore` → `Resolved` or `InTransit`).
-   - **Hybrid Merkle Root Batching**: Supports `registerShipmentBatch(merkleRoot, recordCount, deadline, signature)` to anchor bulk dispatches in a single transaction.
-   - **Cryptographic Inclusion Verification**: Stateless inclusion verification via `verifyShipmentProof(packageHash, proof, merkleRoot)`.
+   - **Unified Merkle Root Batching**: Supports `anchorShipmentBatch(merkleRoot, hashes, deadline, signature)` to anchor bulk dispatches and milestone handovers in a single transaction, passing all item hashes in calldata for public block explorer transparency.
+   - **Cryptographic Inclusion Verification**: Stateless inclusion verification via `verifyShipmentProof(packageHash, proof, merkleRoot)`, `verifyMilestoneProof(milestoneLeaf, proof, merkleRoot)`, and general `verifyProof(leaf, proof, merkleRoot)`.
    - Supports reverse logistics: disputed packages transition through return rider handover (`ReturnTransit`) and store return confirmation (`ReturnedToStore`).
    - Store settlement branches: Path A resolves the dispute (`Resolved`), while Path B re-dispatches fresh replacement goods (`InTransit`) with a new scratch-off secret PIN (`newPackageHash`) and new rider assignment.
    - Integrates dual-layer physical QR labels with scratch-off inner PIN verifications (`SP-XXXX`).
@@ -135,9 +135,9 @@ forge script script/UpgradeSellerPadiShipment.s.sol:UpgradeSellerPadiShipmentScr
 ### Avalanche Fuji Testnet (Chain ID `43113`)
 
 - **SellerPadiReceipt Proxy:** [`0x910Ba81487FE94E97A30EF72B139a3237b579ea5`](https://testnet.snowtrace.io/address/0x910Ba81487FE94E97A30EF72B139a3237b579ea5)
-- **SellerPadiReceipt Implementation:** [`0xdA4641D00607843802AA27EcC6888AA92C73Df02`](https://testnet.snowtrace.io/address/0xdA4641D00607843802AA27EcC6888AA92C73Df02)
+- **SellerPadiReceipt Implementation:** [`0xF13D6298D3F5780a0e4fA59E136aA816b207386B`](https://testnet.snowtrace.io/address/0xF13D6298D3F5780a0e4fA59E136aA816b207386B)
 - **SellerPadiShipment Proxy:** [`0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381`](https://testnet.snowtrace.io/address/0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381)
-- **SellerPadiShipment Implementation:** [`0xd1CC85C87c6B15F8676d8e029196A4A06ebCE75C`](https://testnet.snowtrace.io/address/0xd1CC85C87c6B15F8676d8e029196A4A06ebCE75C)
+- **SellerPadiShipment Implementation:** [`0x0c8168982dFbD4152e014A6A37855092b96C9268`](https://testnet.snowtrace.io/address/0x0c8168982dFbD4152e014A6A37855092b96C9268)
 
 ### Avalanche C-Chain Mainnet (Chain ID `43114`)
 

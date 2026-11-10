@@ -355,10 +355,13 @@ contract SellerPadiReceiptTest is Test {
         return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
     }
 
-    function test_RegisterBatch_Success() public {
+    function test_AnchorReceiptBatch_Success() public {
         bytes32 leaf0 = keccak256("RECEIPT-001");
         bytes32 leaf1 = keccak256("RECEIPT-002");
         bytes32 merkleRoot = _hashPair(leaf0, leaf1);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = leaf0;
+        hashes[1] = leaf1;
         uint32 recordCount = 2;
         uint256 deadline = block.timestamp + 1 hours;
 
@@ -367,8 +370,8 @@ contract SellerPadiReceiptTest is Test {
 
         vm.prank(relayer);
         vm.expectEmit(true, true, false, true);
-        emit SellerPadiReceipt.ReceiptBatchRegistered(merkleRoot, relayer, recordCount, block.timestamp);
-        sellerPadiReceipt.registerReceiptBatch(merkleRoot, recordCount, deadline, sig);
+        emit SellerPadiReceipt.ReceiptBatchAnchored(merkleRoot, relayer, hashes, block.timestamp);
+        sellerPadiReceipt.anchorReceiptBatch(merkleRoot, hashes, deadline, sig);
 
         // Verify batch storage
         SellerPadiReceipt.BatchRecord memory batch = sellerPadiReceipt.getBatch(merkleRoot);
@@ -381,74 +384,100 @@ contract SellerPadiReceiptTest is Test {
         bytes32[] memory proof0 = new bytes32[](1);
         proof0[0] = leaf1;
         assertTrue(sellerPadiReceipt.verifyReceiptProof(leaf0, proof0, merkleRoot));
+        assertTrue(sellerPadiReceipt.verifyProof(leaf0, proof0, merkleRoot));
 
         bytes32[] memory proof1 = new bytes32[](1);
         proof1[0] = leaf0;
         assertTrue(sellerPadiReceipt.verifyReceiptProof(leaf1, proof1, merkleRoot));
+        assertTrue(sellerPadiReceipt.verifyProof(leaf1, proof1, merkleRoot));
 
         // Tampered leaf fails
         bytes32 fakeLeaf = keccak256("RECEIPT-FAKE");
         assertFalse(sellerPadiReceipt.verifyReceiptProof(fakeLeaf, proof0, merkleRoot));
+        assertFalse(sellerPadiReceipt.verifyProof(fakeLeaf, proof0, merkleRoot));
 
         // Non-existent batch fails
         bytes32 nonExistentRoot = keccak256("UNKNOWN-ROOT");
         assertFalse(sellerPadiReceipt.verifyReceiptProof(leaf0, proof0, nonExistentRoot));
+        assertFalse(sellerPadiReceipt.verifyProof(leaf0, proof0, nonExistentRoot));
     }
 
-    function test_RegisterBatch_ZeroRootReverts() public {
+    function test_AnchorReceiptBatch_ZeroRootReverts() public {
         address relayer = address(0xAA);
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory sig = getBatchSignature(relayer, bytes32(0), 10, 0, deadline);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256("LEAF");
+        bytes memory sig = getBatchSignature(relayer, bytes32(0), 1, 0, deadline);
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiReceipt.InvalidMerkleRoot.selector);
-        sellerPadiReceipt.registerReceiptBatch(bytes32(0), 10, deadline, sig);
+        sellerPadiReceipt.anchorReceiptBatch(bytes32(0), hashes, deadline, sig);
     }
 
-    function test_RegisterBatch_ZeroCountReverts() public {
+    function test_AnchorReceiptBatch_ZeroCountReverts() public {
         address relayer = address(0xAA);
         bytes32 root = keccak256("SOME_ROOT");
         uint256 deadline = block.timestamp + 1 hours;
+        bytes32[] memory emptyHashes = new bytes32[](0);
         bytes memory sig = getBatchSignature(relayer, root, 0, 0, deadline);
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiReceipt.InvalidRecordCount.selector);
-        sellerPadiReceipt.registerReceiptBatch(root, 0, deadline, sig);
+        sellerPadiReceipt.anchorReceiptBatch(root, emptyHashes, deadline, sig);
     }
 
-    function test_RegisterBatch_ReplayReverts() public {
+    function test_AnchorReceiptBatch_BatchLimitExceeded() public {
+        address relayer = address(0xAA);
+        bytes32 root = keccak256("OVERSIZED_ROOT");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32[] memory oversizedHashes = new bytes32[](201);
+        bytes memory sig = getBatchSignature(relayer, root, 201, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SellerPadiReceipt.BatchLimitExceeded.selector, 201, 200));
+        sellerPadiReceipt.anchorReceiptBatch(root, oversizedHashes, deadline, sig);
+    }
+
+    function test_AnchorReceiptBatch_ReplayReverts() public {
         bytes32 root = keccak256("REPLAY_ROOT");
-        uint32 count = 5;
+        uint32 count = 2;
         uint256 deadline = block.timestamp + 1 hours;
         address relayer = address(0xAA);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = keccak256("R1");
+        hashes[1] = keccak256("R2");
         bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
 
         vm.prank(relayer);
-        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, sig);
+        sellerPadiReceipt.anchorReceiptBatch(root, hashes, deadline, sig);
 
         // Try registering again with the same signature -> Reverts with BatchAlreadyExists
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(SellerPadiReceipt.BatchAlreadyExists.selector, root));
-        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, sig);
+        sellerPadiReceipt.anchorReceiptBatch(root, hashes, deadline, sig);
     }
 
-    function test_RegisterBatch_RevertIfExpired() public {
+    function test_AnchorReceiptBatch_RevertIfExpired() public {
         bytes32 root = keccak256("EXPIRED_ROOT");
-        uint32 count = 3;
+        uint32 count = 1;
         uint256 deadline = block.timestamp - 1;
         address relayer = address(0xAA);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256("R1");
         bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiReceipt.SignatureExpired.selector);
-        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, sig);
+        sellerPadiReceipt.anchorReceiptBatch(root, hashes, deadline, sig);
     }
 
-    function test_RegisterBatch_InvalidSignature() public {
+    function test_AnchorReceiptBatch_InvalidSignature() public {
         bytes32 root = keccak256("INVALID_SIG_ROOT");
-        uint32 count = 3;
+        uint32 count = 1;
         uint256 deadline = block.timestamp + 1 hours;
         address relayer = address(0xAA);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256("R1");
 
         // Sign with unauthorized key
         uint256 badKey = 0x123456789;
@@ -463,6 +492,36 @@ contract SellerPadiReceiptTest is Test {
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiReceipt.InvalidSignature.selector);
-        sellerPadiReceipt.registerReceiptBatch(root, count, deadline, badSig);
+        sellerPadiReceipt.anchorReceiptBatch(root, hashes, deadline, badSig);
+    }
+
+    function test_AnchorReceiptBatch_MixedLeaves() public {
+        bytes32 receiptLeaf = keccak256("CANONICAL-RECEIPT-001");
+        bytes32 voidLeaf = keccak256(abi.encodePacked(keccak256("RECEIPT-002"), keccak256("Customer Returned Item")));
+        bytes32 merkleRoot = _hashPair(receiptLeaf, voidLeaf);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = receiptLeaf;
+        hashes[1] = voidLeaf;
+        uint32 recordCount = 2;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        address relayer = address(0xAA);
+        bytes memory sig = getBatchSignature(relayer, merkleRoot, recordCount, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, false, true);
+        emit SellerPadiReceipt.ReceiptBatchAnchored(merkleRoot, relayer, hashes, block.timestamp);
+        sellerPadiReceipt.anchorReceiptBatch(merkleRoot, hashes, deadline, sig);
+
+        // Verify both receipt creation and void leaves verify against unified root
+        bytes32[] memory proofForReceipt = new bytes32[](1);
+        proofForReceipt[0] = voidLeaf;
+        assertTrue(sellerPadiReceipt.verifyProof(receiptLeaf, proofForReceipt, merkleRoot));
+        assertTrue(sellerPadiReceipt.verifyReceiptProof(receiptLeaf, proofForReceipt, merkleRoot));
+
+        bytes32[] memory proofForVoid = new bytes32[](1);
+        proofForVoid[0] = receiptLeaf;
+        assertTrue(sellerPadiReceipt.verifyProof(voidLeaf, proofForVoid, merkleRoot));
+        assertTrue(sellerPadiReceipt.verifyVoidProof(voidLeaf, proofForVoid, merkleRoot));
     }
 }

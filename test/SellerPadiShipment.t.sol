@@ -572,10 +572,13 @@ contract SellerPadiShipmentTest is Test {
         return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
     }
 
-    function test_RegisterBatch_Success() public {
+    function test_AnchorShipmentBatch_Success() public {
         bytes32 leaf0 = keccak256("PACKAGE-001");
         bytes32 leaf1 = keccak256("PACKAGE-002");
         bytes32 merkleRoot = _hashPair(leaf0, leaf1);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = leaf0;
+        hashes[1] = leaf1;
         uint32 recordCount = 2;
         uint256 deadline = block.timestamp + 1 hours;
 
@@ -584,8 +587,8 @@ contract SellerPadiShipmentTest is Test {
 
         vm.prank(relayer);
         vm.expectEmit(true, true, false, true);
-        emit SellerPadiShipment.ShipmentBatchRegistered(merkleRoot, relayer, recordCount, block.timestamp);
-        sellerPadiShipment.registerShipmentBatch(merkleRoot, recordCount, deadline, sig);
+        emit SellerPadiShipment.ShipmentBatchAnchored(merkleRoot, relayer, hashes, block.timestamp);
+        sellerPadiShipment.anchorShipmentBatch(merkleRoot, hashes, deadline, sig);
 
         // Verify batch storage
         SellerPadiShipment.BatchRecord memory batch = sellerPadiShipment.getBatch(merkleRoot);
@@ -598,74 +601,100 @@ contract SellerPadiShipmentTest is Test {
         bytes32[] memory proof0 = new bytes32[](1);
         proof0[0] = leaf1;
         assertTrue(sellerPadiShipment.verifyShipmentProof(leaf0, proof0, merkleRoot));
+        assertTrue(sellerPadiShipment.verifyProof(leaf0, proof0, merkleRoot));
 
         bytes32[] memory proof1 = new bytes32[](1);
         proof1[0] = leaf0;
         assertTrue(sellerPadiShipment.verifyShipmentProof(leaf1, proof1, merkleRoot));
+        assertTrue(sellerPadiShipment.verifyProof(leaf1, proof1, merkleRoot));
 
         // Tampered leaf fails
         bytes32 fakeLeaf = keccak256("PACKAGE-FAKE");
         assertFalse(sellerPadiShipment.verifyShipmentProof(fakeLeaf, proof0, merkleRoot));
+        assertFalse(sellerPadiShipment.verifyProof(fakeLeaf, proof0, merkleRoot));
 
         // Non-existent batch fails
         bytes32 nonExistentRoot = keccak256("UNKNOWN-ROOT");
         assertFalse(sellerPadiShipment.verifyShipmentProof(leaf0, proof0, nonExistentRoot));
+        assertFalse(sellerPadiShipment.verifyProof(leaf0, proof0, nonExistentRoot));
     }
 
-    function test_RegisterBatch_ZeroRootReverts() public {
+    function test_AnchorShipmentBatch_ZeroRootReverts() public {
         address relayer = address(0xBB);
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory sig = getBatchSignature(relayer, bytes32(0), 10, 0, deadline);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256("PKG");
+        bytes memory sig = getBatchSignature(relayer, bytes32(0), 1, 0, deadline);
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiShipment.InvalidMerkleRoot.selector);
-        sellerPadiShipment.registerShipmentBatch(bytes32(0), 10, deadline, sig);
+        sellerPadiShipment.anchorShipmentBatch(bytes32(0), hashes, deadline, sig);
     }
 
-    function test_RegisterBatch_ZeroCountReverts() public {
+    function test_AnchorShipmentBatch_ZeroCountReverts() public {
         address relayer = address(0xBB);
         bytes32 root = keccak256("SOME_ROOT");
         uint256 deadline = block.timestamp + 1 hours;
+        bytes32[] memory emptyHashes = new bytes32[](0);
         bytes memory sig = getBatchSignature(relayer, root, 0, 0, deadline);
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiShipment.InvalidRecordCount.selector);
-        sellerPadiShipment.registerShipmentBatch(root, 0, deadline, sig);
+        sellerPadiShipment.anchorShipmentBatch(root, emptyHashes, deadline, sig);
     }
 
-    function test_RegisterBatch_ReplayReverts() public {
+    function test_AnchorShipmentBatch_BatchLimitExceeded() public {
+        address relayer = address(0xBB);
+        bytes32 root = keccak256("OVERSIZED_ROOT");
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32[] memory oversizedHashes = new bytes32[](201);
+        bytes memory sig = getBatchSignature(relayer, root, 201, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SellerPadiShipment.BatchLimitExceeded.selector, 201, 200));
+        sellerPadiShipment.anchorShipmentBatch(root, oversizedHashes, deadline, sig);
+    }
+
+    function test_AnchorShipmentBatch_ReplayReverts() public {
         bytes32 root = keccak256("REPLAY_ROOT");
-        uint32 count = 5;
+        uint32 count = 2;
         uint256 deadline = block.timestamp + 1 hours;
         address relayer = address(0xBB);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = keccak256("P1");
+        hashes[1] = keccak256("P2");
         bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
 
         vm.prank(relayer);
-        sellerPadiShipment.registerShipmentBatch(root, count, deadline, sig);
+        sellerPadiShipment.anchorShipmentBatch(root, hashes, deadline, sig);
 
         // Try registering again with the same signature -> Reverts with BatchAlreadyExists
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(SellerPadiShipment.BatchAlreadyExists.selector, root));
-        sellerPadiShipment.registerShipmentBatch(root, count, deadline, sig);
+        sellerPadiShipment.anchorShipmentBatch(root, hashes, deadline, sig);
     }
 
-    function test_RegisterBatch_RevertIfExpired() public {
+    function test_AnchorShipmentBatch_RevertIfExpired() public {
         bytes32 root = keccak256("EXPIRED_ROOT");
-        uint32 count = 3;
+        uint32 count = 1;
         uint256 deadline = block.timestamp - 1;
         address relayer = address(0xBB);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256("P1");
         bytes memory sig = getBatchSignature(relayer, root, count, 0, deadline);
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiShipment.SignatureExpired.selector);
-        sellerPadiShipment.registerShipmentBatch(root, count, deadline, sig);
+        sellerPadiShipment.anchorShipmentBatch(root, hashes, deadline, sig);
     }
 
-    function test_RegisterBatch_InvalidSignature() public {
+    function test_AnchorShipmentBatch_InvalidSignature() public {
         bytes32 root = keccak256("INVALID_SIG_ROOT");
-        uint32 count = 3;
+        uint32 count = 1;
         uint256 deadline = block.timestamp + 1 hours;
         address relayer = address(0xBB);
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256("P1");
 
         // Sign with unauthorized key
         uint256 badKey = 0x123456789;
@@ -680,6 +709,36 @@ contract SellerPadiShipmentTest is Test {
 
         vm.prank(relayer);
         vm.expectRevert(SellerPadiShipment.InvalidSignature.selector);
-        sellerPadiShipment.registerShipmentBatch(root, count, deadline, badSig);
+        sellerPadiShipment.anchorShipmentBatch(root, hashes, deadline, badSig);
+    }
+
+    function test_AnchorShipmentBatch_MixedLeaves() public {
+        bytes32 dispatchLeaf = keccak256("PACKAGE-HASH-001");
+        bytes32 milestoneLeaf = keccak256(abi.encodePacked(keccak256("SECRET-001"), keccak256("Verified")));
+        bytes32 merkleRoot = _hashPair(dispatchLeaf, milestoneLeaf);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = dispatchLeaf;
+        hashes[1] = milestoneLeaf;
+        uint32 recordCount = 2;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        address relayer = address(0xAA);
+        bytes memory sig = getBatchSignature(relayer, merkleRoot, recordCount, 0, deadline);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, false, true);
+        emit SellerPadiShipment.ShipmentBatchAnchored(merkleRoot, relayer, hashes, block.timestamp);
+        sellerPadiShipment.anchorShipmentBatch(merkleRoot, hashes, deadline, sig);
+
+        // Verify both dispatch and milestone leaves verify against unified root
+        bytes32[] memory proofForDispatch = new bytes32[](1);
+        proofForDispatch[0] = milestoneLeaf;
+        assertTrue(sellerPadiShipment.verifyProof(dispatchLeaf, proofForDispatch, merkleRoot));
+        assertTrue(sellerPadiShipment.verifyShipmentProof(dispatchLeaf, proofForDispatch, merkleRoot));
+
+        bytes32[] memory proofForMilestone = new bytes32[](1);
+        proofForMilestone[0] = dispatchLeaf;
+        assertTrue(sellerPadiShipment.verifyProof(milestoneLeaf, proofForMilestone, merkleRoot));
+        assertTrue(sellerPadiShipment.verifyMilestoneProof(milestoneLeaf, proofForMilestone, merkleRoot));
     }
 }

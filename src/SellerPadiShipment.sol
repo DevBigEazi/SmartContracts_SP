@@ -63,8 +63,8 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
     event ShipmentRedispatched(
         bytes32 indexed packageId, bytes32 newPackageHash, address indexed nextHandler, uint256 timestamp
     );
-    event ShipmentBatchRegistered(
-        bytes32 indexed merkleRoot, address indexed relayer, uint32 recordCount, uint256 timestamp
+    event ShipmentBatchAnchored(
+        bytes32 indexed merkleRoot, address indexed relayer, bytes32[] hashes, uint256 timestamp
     );
     event BackendSignerChanged(address indexed oldSigner, address indexed newSigner);
 
@@ -73,6 +73,7 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
     error ShipmentAlreadyExists(bytes32 packageId);
     error BatchAlreadyExists(bytes32 merkleRoot);
     error BatchNotFound(bytes32 merkleRoot);
+    error BatchLimitExceeded(uint256 count, uint256 maxLimit);
     error InvalidStatusTransition(bytes32 packageId, Status currentStatus, Status targetStatus);
     error InvalidPackageHash();
     error InvalidMerkleRoot();
@@ -144,19 +145,24 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
     }
 
     /**
-     * @notice Anchors a cryptographic Merkle root representing a batch of dispatched packages.
-     * @dev Reduces on-chain gas costs by ~99% by anchoring hundreds of shipments in a single transaction.
-     * @param merkleRoot The keccak256 root of the Merkle tree formed by batched package hashes.
-     * @param recordCount The count of shipment records included in this batch.
+     * @notice Universal logistics Merkle batch anchor with transparent calldata hashes.
+     * @dev Anchors any logistics Merkle tree (package dispatches, handovers, verifications, disputes, returns) in a single transaction.
+     * @param merkleRoot The keccak256 root of the Merkle tree formed by batched shipment and milestone leaves.
+     * @param hashes Array of included shipment package and milestone leaf hashes (visible on block explorers).
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic witness signature from the backend signer.
      */
-    function registerShipmentBatch(bytes32 merkleRoot, uint32 recordCount, uint256 deadline, bytes calldata signature)
-        external
-    {
+    function anchorShipmentBatch(
+        bytes32 merkleRoot,
+        bytes32[] calldata hashes,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
         if (block.timestamp > deadline) revert SignatureExpired();
         if (merkleRoot == bytes32(0)) revert InvalidMerkleRoot();
+        uint32 recordCount = uint32(hashes.length);
         if (recordCount == 0) revert InvalidRecordCount();
+        if (recordCount > 200) revert BatchLimitExceeded(recordCount, 200);
         if (_batches[merkleRoot].merkleRoot != bytes32(0)) {
             revert BatchAlreadyExists(merkleRoot);
         }
@@ -178,7 +184,7 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
         _batches[merkleRoot] =
             BatchRecord({merkleRoot: merkleRoot, relayer: relayer, recordCount: recordCount, anchoredAt: timestamp});
 
-        emit ShipmentBatchRegistered(merkleRoot, relayer, recordCount, timestamp);
+        emit ShipmentBatchAnchored(merkleRoot, relayer, hashes, timestamp);
     }
 
     /**
@@ -526,6 +532,38 @@ contract SellerPadiShipment is Initializable, UUPSUpgradeable, OwnableUpgradeabl
             return false;
         }
         return MerkleProof.verify(proof, merkleRoot, packageHash);
+    }
+
+    /**
+     * @notice Verifies whether a specific milestone leaf hash is cryptographically included in an anchored milestone batch.
+     * @param milestoneLeaf The leaf hash of the milestone (keccak256(packageId, eventType, operator, timestamp)).
+     * @param proof Array of sibling branch hashes leading up to the Merkle root.
+     * @param merkleRoot The anchored batch Merkle root.
+     * @return True if the cryptographic inclusion proof is valid.
+     */
+    function verifyMilestoneProof(bytes32 milestoneLeaf, bytes32[] calldata proof, bytes32 merkleRoot)
+        external
+        view
+        returns (bool)
+    {
+        if (_batches[merkleRoot].merkleRoot == bytes32(0)) {
+            return false;
+        }
+        return MerkleProof.verify(proof, merkleRoot, milestoneLeaf);
+    }
+
+    /**
+     * @notice Verifies whether any leaf hash is cryptographically included in an anchored batch.
+     * @param leaf The leaf hash (shipment package or milestone).
+     * @param proof Array of sibling branch hashes leading up to the Merkle root.
+     * @param merkleRoot The anchored batch Merkle root.
+     * @return True if the cryptographic inclusion proof is valid.
+     */
+    function verifyProof(bytes32 leaf, bytes32[] calldata proof, bytes32 merkleRoot) external view returns (bool) {
+        if (_batches[merkleRoot].merkleRoot == bytes32(0)) {
+            return false;
+        }
+        return MerkleProof.verify(proof, merkleRoot, leaf);
     }
 
     // --- UUPS Upgrade Authorization ---

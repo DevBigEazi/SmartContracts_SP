@@ -15,6 +15,7 @@ interface IUUPSUpgradeable {
 contract UpgradeSellerPadiReceiptScript is Script {
     address public constant PROXY_ADDRESS = 0x910Ba81487FE94E97A30EF72B139a3237b579ea5;
     // 0x910Ba81487FE94E97A30EF72B139a3237b579ea5
+
     function run() external {
         address proxyAddress = vm.envOr("RECEIPT_PROXY_ADDRESS", PROXY_ADDRESS);
         console2.log("Upgrading SellerPadiReceipt UUPS Proxy at:", proxyAddress);

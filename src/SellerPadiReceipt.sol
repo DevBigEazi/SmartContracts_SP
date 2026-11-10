@@ -49,8 +49,8 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
         bytes32 indexed receiptHash, address indexed merchant, bytes32 indexed parentReceiptHash, uint256 timestamp
     );
     event ReceiptVoided(bytes32 indexed receiptHash, address indexed merchant, string reason, uint256 timestamp);
-    event ReceiptBatchRegistered(
-        bytes32 indexed merkleRoot, address indexed relayer, uint32 recordCount, uint256 timestamp
+    event ReceiptBatchAnchored(
+        bytes32 indexed merkleRoot, address indexed relayer, bytes32[] hashes, uint256 timestamp
     );
     event BackendSignerChanged(address indexed oldSigner, address indexed newSigner);
 
@@ -60,6 +60,7 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
     error ReceiptAlreadyVoided(bytes32 receiptHash);
     error BatchAlreadyExists(bytes32 merkleRoot);
     error BatchNotFound(bytes32 merkleRoot);
+    error BatchLimitExceeded(uint256 count, uint256 maxLimit);
     error InvalidReceiptHash();
     error InvalidMerkleRoot();
     error InvalidRecordCount();
@@ -138,19 +139,24 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
     }
 
     /**
-     * @notice Anchors a cryptographic Merkle root representing a batch of finalized receipts.
-     * @dev Reduces on-chain gas costs by ~99% by anchoring hundreds of receipts in a single transaction.
-     * @param merkleRoot The keccak256 root of the Merkle tree formed by batched receipt leaf hashes.
-     * @param recordCount The count of receipt records included in this batch.
+     * @notice Universal point-of-sale Merkle batch anchor with transparent calldata hashes.
+     * @dev Anchors any POS Merkle tree (receipt creations, voids, or mixed) in a single transaction.
+     * @param merkleRoot The keccak256 root of the Merkle tree formed by batched receipt and void leaves.
+     * @param hashes Array of included receipt and void leaf hashes (visible on block explorers).
      * @param deadline The signature expiration timestamp.
      * @param signature The cryptographic witness signature from the backend signer.
      */
-    function registerReceiptBatch(bytes32 merkleRoot, uint32 recordCount, uint256 deadline, bytes calldata signature)
-        external
-    {
+    function anchorReceiptBatch(
+        bytes32 merkleRoot,
+        bytes32[] calldata hashes,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
         if (block.timestamp > deadline) revert SignatureExpired();
         if (merkleRoot == bytes32(0)) revert InvalidMerkleRoot();
+        uint32 recordCount = uint32(hashes.length);
         if (recordCount == 0) revert InvalidRecordCount();
+        if (recordCount > 200) revert BatchLimitExceeded(recordCount, 200);
         if (_batches[merkleRoot].merkleRoot != bytes32(0)) {
             revert BatchAlreadyExists(merkleRoot);
         }
@@ -172,7 +178,7 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
         _batches[merkleRoot] =
             BatchRecord({merkleRoot: merkleRoot, relayer: relayer, recordCount: recordCount, anchoredAt: timestamp});
 
-        emit ReceiptBatchRegistered(merkleRoot, relayer, recordCount, timestamp);
+        emit ReceiptBatchAnchored(merkleRoot, relayer, hashes, timestamp);
     }
 
     /**
@@ -275,6 +281,38 @@ contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable
             return false;
         }
         return MerkleProof.verify(proof, merkleRoot, receiptHash);
+    }
+
+    /**
+     * @notice Verifies whether a specific void leaf hash is cryptographically included in an anchored void batch.
+     * @param voidLeaf The leaf hash of the voided receipt (keccak256(receiptHash, keccak256(reason), voidedAt)).
+     * @param proof Array of sibling branch hashes leading up to the Merkle root.
+     * @param merkleRoot The anchored batch Merkle root.
+     * @return True if the cryptographic inclusion proof is valid.
+     */
+    function verifyVoidProof(bytes32 voidLeaf, bytes32[] calldata proof, bytes32 merkleRoot)
+        external
+        view
+        returns (bool)
+    {
+        if (_batches[merkleRoot].merkleRoot == bytes32(0)) {
+            return false;
+        }
+        return MerkleProof.verify(proof, merkleRoot, voidLeaf);
+    }
+
+    /**
+     * @notice Verifies whether any leaf hash is cryptographically included in an anchored batch.
+     * @param leaf The leaf hash (receipt creation or void).
+     * @param proof Array of sibling branch hashes leading up to the Merkle root.
+     * @param merkleRoot The anchored batch Merkle root.
+     * @return True if the cryptographic inclusion proof is valid.
+     */
+    function verifyProof(bytes32 leaf, bytes32[] calldata proof, bytes32 merkleRoot) external view returns (bool) {
+        if (_batches[merkleRoot].merkleRoot == bytes32(0)) {
+            return false;
+        }
+        return MerkleProof.verify(proof, merkleRoot, leaf);
     }
 
     // --- UUPS Upgrade Authorization ---
