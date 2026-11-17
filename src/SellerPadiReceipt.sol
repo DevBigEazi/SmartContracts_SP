@@ -10,7 +10,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 
 /**
  * @title SellerPadiReceipt
- * @notice A decentralized UUPS-upgradeable digital receipt and sales proof registry on Avalanche C-Chain.
+ * @notice A decentralized UUPS-upgradeable digital receipt and sales proof registry on Electroneum Smart Chain.
  * @dev Anchors individual cryptographic receipt hashes and batched Merkle roots using gasless backend witness signatures.
  */
 contract SellerPadiReceipt is Initializable, UUPSUpgradeable, OwnableUpgradeable {
