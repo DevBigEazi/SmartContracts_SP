@@ -1,6 +1,6 @@
-# SellerPadi Smart Contracts — Avalanche C-Chain
+# SellerPadi Smart Contracts — Electroneum Smart Chain
 
-**SellerPadi** is a paperless merchant operating system and trust protocol built for retailers, SMEs, and commercial dispatchers. These smart contracts anchor tamper-proof digital sales receipts, audit trails, and logistics package handover verifications onto **Avalanche C-Chain**, harnessing sub-second transaction finality and minimal gas costs for real-time counter checkouts.
+**SellerPadi** is a paperless merchant operating system and trust protocol built for retailers, SMEs, and commercial dispatchers. These smart contracts anchor tamper-proof digital sales receipts, audit trails, and logistics package handover verifications onto **Electroneum Smart Chain (ETN-SC)**, harnessing fast EVM transaction finality and minimal gas costs for real-time counter checkouts.
 
 ---
 
@@ -70,39 +70,39 @@ forge snapshot
 
 Deployments are executed using Foundry's encrypted keystore accounts (`cast wallet`) to ensure private keys are never stored in plaintext.
 
-### 1. Avalanche Fuji Testnet (Chain ID `43113`)
+### 1. Electroneum Testnet (Chain ID `5201420`)
 
-Deploy implementation and UUPS proxy contracts to Avalanche Fuji:
+Deploy implementation and UUPS proxy contracts to Electroneum Testnet:
 
 ```shell
 # Deploy SellerPadiReceipt (Implementation + Proxy)
 forge script scripts/SellerPadiReceipt.s.sol:SellerPadiReceiptScript \
-  --rpc-url avalanche-fuji \
+  --rpc-url electroneum-testnet \
   --account deployer \
   --broadcast \
   --verify
 
 # Deploy SellerPadiShipment (Implementation + Proxy)
 forge script scripts/SellerPadiShipment.s.sol:SellerPadiShipmentScript \
-  --rpc-url avalanche-fuji \
+  --rpc-url electroneum-testnet \
   --account deployer \
   --broadcast \
   --verify
 ```
 
-### 2. Avalanche Mainnet (Chain ID `43114`)
+### 2. Electroneum Mainnet (Chain ID `52014`)
 
-Deploy to Avalanche C-Chain Mainnet:
+Deploy to Electroneum Smart Chain Mainnet:
 
 ```shell
 forge script scripts/SellerPadiReceipt.s.sol:SellerPadiReceiptScript \
-  --rpc-url avalanche \
+  --rpc-url electroneum \
   --account myWallet \
   --broadcast \
   --verify
 
 forge script scripts/SellerPadiShipment.s.sol:SellerPadiShipmentScript \
-  --rpc-url avalanche \
+  --rpc-url electroneum \
   --account myWallet \
   --broadcast \
   --verify
@@ -110,46 +110,40 @@ forge script scripts/SellerPadiShipment.s.sol:SellerPadiShipmentScript \
 
 ### 3. Upgrading UUPS Implementation Contracts
 
-When deploying upgraded contract logic with new features (e.g. Merkle batching), deploy the new implementation and upgrade the UUPS proxy:
+When deploying upgraded contract logic with new features, deploy the new implementation and upgrade the UUPS proxy:
 
 ```shell
 # Upgrade SellerPadiReceipt Implementation
 forge script script/UpgradeSellerPadiReceipt.s.sol:UpgradeSellerPadiReceiptScript \
-  --rpc-url avalanche-fuji \
+  --rpc-url electroneum-testnet \
   --account deployer \
   --broadcast \
   --verify
 
 # Upgrade SellerPadiShipment Implementation
 forge script script/UpgradeSellerPadiShipment.s.sol:UpgradeSellerPadiShipmentScript \
-  --rpc-url avalanche-fuji \
+  --rpc-url electroneum-testnet \
   --account deployer \
- --broadcast \
+  --broadcast \
   --verify
 ```
 
 ---
 
-## Deployed Contract Addresses
+## Contract Addresses
 
-### Avalanche Fuji Testnet (Chain ID `43113`)
+### Electroneum Testnet (Chain ID `5201420`)
 
-- **SellerPadiReceipt Proxy:** [`0x910Ba81487FE94E97A30EF72B139a3237b579ea5`](https://testnet.snowtrace.io/address/0x910Ba81487FE94E97A30EF72B139a3237b579ea5)
-- **SellerPadiReceipt Implementation:** [`0xF13D6298D3F5780a0e4fA59E136aA816b207386B`](https://testnet.snowtrace.io/address/0xF13D6298D3F5780a0e4fA59E136aA816b207386B)
-- **SellerPadiShipment Proxy:** [`0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381`](https://testnet.snowtrace.io/address/0x32Fd4b31c23f3C3ff168Eb308F53723F9B672381)
-- **SellerPadiShipment Implementation:** [`0x0c8168982dFbD4152e014A6A37855092b96C9268`](https://testnet.snowtrace.io/address/0x0c8168982dFbD4152e014A6A37855092b96C9268)
+- **Block Explorer:** [https://testnet-blockexplorer.electroneum.com](https://testnet-blockexplorer.electroneum.com)
+- **SellerPadiReceipt Proxy:** [`0x54D4DF856e3D18966D916358dE69408b973AA09E`](https://testnet-blockexplorer.electroneum.com/address/0x54D4DF856e3D18966D916358dE69408b973AA09E)
+- **SellerPadiReceipt Implementation:** [`0x50bc20b7df9e564f7A86e7C4Bce5Ab4C8bDA04BD`](https://testnet-blockexplorer.electroneum.com/address/0x50bc20b7df9e564f7A86e7C4Bce5Ab4C8bDA04BD)
+- **SellerPadiShipment Proxy:** [`0x44586E2f2761105f1e7a3e65E9bFd8295Ce536aD`](https://testnet-blockexplorer.electroneum.com/address/0x44586E2f2761105f1e7a3e65E9bFd8295Ce536aD)
+- **SellerPadiShipment Implementation:** [`0x20c795DF5B0815a46c5B7230B350edFA4cBA5D5b`](https://testnet-blockexplorer.electroneum.com/address/0x20c795DF5B0815a46c5B7230B350edFA4cBA5D5b)
 
-### Avalanche C-Chain Mainnet (Chain ID `43114`)
+### Electroneum Mainnet (Chain ID `52014`)
 
-- **SellerPadiReceipt Proxy:** `TBD`
-- **SellerPadiReceipt Implementation:** `TBD`
-- **SellerPadiShipment Proxy:** `TBD`
-- **SellerPadiShipment Implementation:** `TBD`
-
----
-
-## Security & Access Control
-
-- **UUPS Upgradeability**: Both contracts inherit from `@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol` with strict `onlyOwner` access checks on `_authorizeUpgrade`.
-- **EIP-712 & Nonce Replay Protection**: State updates signed by the backend relayer require strict sequential user nonces (`userNonces[sender]`) and deadline checks.
-- **Zero PII On-Chain**: No customer names, phone numbers, or inventory line items touch the blockchain. Only cryptographic SHA-256 hashes (`receiptHash`, `innerSecretHash`) are stored on-chain.
+- **Block Explorer:** [https://blockexplorer.electroneum.com](https://blockexplorer.electroneum.com)
+- **SellerPadiReceipt Proxy:** `Pending Deployment`
+- **SellerPadiReceipt Implementation:** `Pending Deployment`
+- **SellerPadiShipment Proxy:** `Pending Deployment`
+- **SellerPadiShipment Implementation:** `Pending Deployment`

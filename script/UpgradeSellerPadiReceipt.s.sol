@@ -10,7 +10,7 @@ interface IUUPSUpgradeable {
 
 /**
  * @title UpgradeSellerPadiReceiptScript
- * @notice Deploys a new implementation of SellerPadiReceipt and upgrades the UUPS Proxy on Avalanche C-Chain.
+ * @notice Deploys a new implementation of SellerPadiReceipt and upgrades the UUPS Proxy on Electroneum Smart Chain.
  */
 contract UpgradeSellerPadiReceiptScript is Script {
     address public constant PROXY_ADDRESS = 0x910Ba81487FE94E97A30EF72B139a3237b579ea5;
