@@ -128,6 +128,38 @@ forge script script/UpgradeSellerPadiShipment.s.sol:UpgradeSellerPadiShipmentScr
   --verify
 ```
 
+### 4. Contract Verification on Electroneum Block Explorer
+
+Electroneum operates a Blockscout-compatible block explorer. Verify deployed contracts using `forge verify-contract` with the `--verifier blockscout` engine:
+
+```shell
+# 1. Verify SellerPadiReceipt Implementation
+forge verify-contract 0xA8E042374a2b2f5f06CC87455dAEfD614978d526 \
+  src/SellerPadiReceipt.sol:SellerPadiReceipt \
+  --verifier blockscout \
+  --verifier-url "https://blockexplorer.electroneum.com/api?"
+
+# 2. Verify SellerPadiShipment Implementation
+forge verify-contract 0xE25b39D09CA340a966a89f71E91BAC974c400f55 \
+  src/SellerPadiShipment.sol:SellerPadiShipment \
+  --verifier blockscout \
+  --verifier-url "https://blockexplorer.electroneum.com/api?"
+
+# 3. Verify SellerPadiReceipt Proxy
+forge verify-contract 0x44E0A4020eD2bf00C99047A449775c68a9E0C578 \
+  lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
+  --constructor-args $(cast abi-encode "constructor(address,bytes)" 0xA8E042374a2b2f5f06CC87455dAEfD614978d526 0xc4d66de80000000000000000000000002755f9b4fe69d78c51271e81e03c1f865e92c045) \
+  --verifier blockscout \
+  --verifier-url "https://blockexplorer.electroneum.com/api?"
+
+# 4. Verify SellerPadiShipment Proxy
+forge verify-contract 0x040BEc94Dd3Cb4C9D42c6b7896D32aEb3E3C89F5 \
+  lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
+  --constructor-args $(cast abi-encode "constructor(address,bytes)" 0xE25b39D09CA340a966a89f71E91BAC974c400f55 0xc4d66de80000000000000000000000002755f9b4fe69d78c51271e81e03c1f865e92c045) \
+  --verifier blockscout \
+  --verifier-url "https://blockexplorer.electroneum.com/api?"
+```
+
 ---
 
 ## Contract Addresses
@@ -143,7 +175,8 @@ forge script script/UpgradeSellerPadiShipment.s.sol:UpgradeSellerPadiShipmentScr
 ### Electroneum Mainnet (Chain ID `52014`)
 
 - **Block Explorer:** [https://blockexplorer.electroneum.com](https://blockexplorer.electroneum.com)
-- **SellerPadiReceipt Proxy:** `Pending Deployment`
-- **SellerPadiReceipt Implementation:** `Pending Deployment`
-- **SellerPadiShipment Proxy:** `Pending Deployment`
-- **SellerPadiShipment Implementation:** `Pending Deployment`
+- **Backend Signer Witness:** [`0x2755f9B4FE69D78C51271e81e03c1F865e92C045`](https://blockexplorer.electroneum.com/address/0x2755f9B4FE69D78C51271e81e03c1F865e92C045)
+- **SellerPadiReceipt Proxy:** [`0x44E0A4020eD2bf00C99047A449775c68a9E0C578`](https://blockexplorer.electroneum.com/address/0x44E0A4020eD2bf00C99047A449775c68a9E0C578)
+- **SellerPadiReceipt Implementation:** [`0xA8E042374a2b2f5f06CC87455dAEfD614978d526`](https://blockexplorer.electroneum.com/address/0xA8E042374a2b2f5f06CC87455dAEfD614978d526)
+- **SellerPadiShipment Proxy:** [`0x040BEc94Dd3Cb4C9D42c6b7896D32aEb3E3C89F5`](https://blockexplorer.electroneum.com/address/0x040BEc94Dd3Cb4C9D42c6b7896D32aEb3E3C89F5)
+- **SellerPadiShipment Implementation:** [`0xE25b39D09CA340a966a89f71E91BAC974c400f55`](https://blockexplorer.electroneum.com/address/0xE25b39D09CA340a966a89f71E91BAC974c400f55)
